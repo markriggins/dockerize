@@ -29,6 +29,7 @@ var (
 	stdoutTailFlag  sliceVar
 	stderrTailFlag  sliceVar
 	overlaysFlag    sliceVar
+	secretsFlag     sliceVar
 	delimsFlag      string
 	delims          []string
 	waitFlag        hostFlagsVar
@@ -137,7 +138,8 @@ Arguments:
    	     -overlay overlays/{{ .Env.DEPLOYMENT_ENV }}/html:/usr/share/nginx/ \`)
 	println(`   	     -stdout /var/log/nginx/access.log \
              -stderr /var/log/nginx/error.log \
-             -wait tcp://web:8000 nginx
+             -wait tcp://web:8000 nginx \
+             -secrets /secrets/secrets.env
 	`)
 
 	println(`For more information, see https://github.com/jwilder/dockerize`)
@@ -149,6 +151,7 @@ func main() {
 	flag.BoolVar(&poll, "poll", false, "enable polling")
 	flag.Var(&templatesFlag, "template", "Template (/template:/dest). Can be passed multiple times")
 	flag.Var(&overlaysFlag, "overlay", "overlay (/src:/dest). Can be passed multiple times")
+	flag.Var(&secretsFlag, "secrets", "secrets (path to secrets.env file). Can be passed multiple times")
 	flag.Var(&stdoutTailFlag, "stdout", "Tails a file to stdout. Can be passed multiple times")
 	flag.Var(&stderrTailFlag, "stderr", "Tails a file to stderr. Can be passed multiple times")
 	flag.StringVar(&delimsFlag, "delims", "", `template tag delimiters. default "{{":"}}" `)

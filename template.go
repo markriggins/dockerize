@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
 	"os"
@@ -13,16 +15,61 @@ import (
 	"text/template"
 )
 
-type EnvContext struct {
+type TemplateContext struct {
+	env, secrets map[string]string
 }
 
-func (c *EnvContext) Env() map[string]string {
-	env := make(map[string]string)
+func (c *TemplateContext) Env() map[string]string {
+	if c.env != nil {
+		return c.env
+	}
+	c.env = make(map[string]string)
+
 	for _, i := range os.Environ() {
 		sep := strings.Index(i, "=")
-		env[i[0:sep]] = i[sep+1:]
+		c.env[i[0:sep]] = i[sep+1:]
 	}
-	return env
+	return c.env
+}
+
+func (c *TemplateContext) Secret() map[string]string {
+	if c.secrets != nil {
+		return c.secrets
+	}
+	c.secrets = make(map[string]string)
+
+	for _, secretsFileName := range secretsFlag {
+		secretsFile, err := os.Open(secretsFileName)
+		if err != nil {
+			log.Fatalf("Error opening secrets file '%s':%s", secretsFileName, err)
+		}
+		defer secretsFile.Close()
+		bSecretsFile := bufio.NewReader(secretsFile)
+
+		for {
+			line_bytes, isPrefix, err := bSecretsFile.ReadLine()
+			line := string(line_bytes)
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				log.Fatalf("Error reading secrets file '%s':%s", secretsFileName, err)
+			}
+			if isPrefix {
+				log.Fatal("Error secrets file too long: ", secretsFileName)
+			}
+			if strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) < 2 {
+				continue
+			}
+			key, value := parts[0], strings.Trim(strings.TrimSpace(parts[1]), `'"`)
+			c.secrets[key] = value
+		}
+	}
+	return c.secrets
 }
 
 func exists(path string) (bool, error) {
@@ -82,7 +129,7 @@ func add(arg1, arg2 int) int {
 }
 
 //
-// Execute the string_template under the EnvContext, and
+// Execute the string_template under the TemplateContext, and
 // return the result as a string
 //
 func string_template_eval(string_template string) string {
@@ -94,7 +141,7 @@ func string_template_eval(string_template string) string {
 		log.Fatalf("unable to parse template: %s", err)
 	}
 
-	err = t.Execute(&result, &EnvContext{})
+	err = t.Execute(&result, &TemplateContext{})
 	if err != nil {
 		log.Fatalf("template error: %s\n", err)
 	}
@@ -103,7 +150,7 @@ func string_template_eval(string_template string) string {
 }
 
 //
-// Execute the template at templatePath under the EnvContext and write it to destPath
+// Execute the template at templatePath under the TemplateContext and write it to destPath
 //
 func generateFile(templatePath, destPath string) bool {
 	tmpl := template.New(filepath.Base(templatePath)).Funcs(template.FuncMap{
@@ -132,9 +179,10 @@ func generateFile(templatePath, destPath string) bool {
 			log.Fatalf("unable to create %s", err)
 		}
 		defer dest.Close()
+		log.Printf("Template %s --> %s\n", templatePath, destPath)
 	}
 
-	err = tmpl.ExecuteTemplate(dest, filepath.Base(templatePath), &EnvContext{})
+	err = tmpl.ExecuteTemplate(dest, filepath.Base(templatePath), &TemplateContext{})
 	if err != nil {
 		log.Fatalf("template error: %s\n", err)
 	}
