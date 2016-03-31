@@ -30,11 +30,11 @@ var (
 	startsFlag      sliceVar
 	runsFlag        sliceVar
 	reapFlag        bool
+	verboseFlag     bool
 	delimsFlag      string
 	delims          []string
 	waitFlag        hostFlagsVar
 	waitTimeoutFlag time.Duration
-	dependencyChan  chan struct{}
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -110,6 +110,7 @@ func main() {
 	flag.Var(&runsFlag, "run", "run (cmd [opts] [args] --) Can be passed multiple times")
 	flag.Var(&startsFlag, "start", "start (cmd [opts] [args] --) Can be passed multiple times")
 	flag.BoolVar(&reapFlag, "reap", false, "reap all child processes")
+	flag.BoolVar(&verboseFlag, "verbose", false, "verbose output")
 	flag.Var(&stdoutTailFlag, "stdout", "Tails a file to stdout. Can be passed multiple times")
 	flag.Var(&stderrTailFlag, "stderr", "Tails a file to stderr. Can be passed multiple times")
 	flag.StringVar(&delimsFlag, "delims", "", `template tag delimiters. default "{{":"}}" `)
@@ -204,9 +205,14 @@ func main() {
 		wg.Add(1)
 		go runCmd(ctx, func() {
 			log.Fatalf("Primary Command `%s` stopped", cmdString)
+			os.Exit(1)
+			panic("couldn't exit")
 		}, flag.Arg(0), flag.Args()[1:]...)
 	}
 
-	go ReapChildren()
+	if reapFlag {
+		go ReapChildren()
+	}
+
 	wg.Wait()
 }

@@ -98,6 +98,18 @@ If your file uses `{{` and `}}` as part of it's syntax, you can change the templ
 $ dockerize -delims "<%:%>"
 ```
 
+If you need to run one or more commands before the main command starts, then use the `-run` option.
+
+```
+$ dockerize -run sleep 5 -- -run ls -l  -- echo DONE
+```
+
+If you need to start one or more service commands before the command starts, then use the `-start` option. If any service exits, then the main command will stop as well.
+
+```
+$ dockerize -start tail -f /dev/stderr -- -start   -- echo DONE
+```
+
 ## Waiting for other dependencies
 
 It is common when using tools like [Docker Compose](https://docs.docker.com/compose/) to depend on services in other linked containers, however oftentimes relying on [links](https://docs.docker.com/compose/compose-file/#links) is not enough - whilst the container itself may have _started_, the _service(s)_ within it may not yet be ready - resulting in shell script hacks to work around race conditions.

@@ -36,7 +36,7 @@ func ReapChildren() {
 
 	done := make(chan struct{}, 1)
 
-	var reapLock = &sync.RWMutex{}
+	var reapLock *sync.RWMutex
 
 	for {
 		// Block for an incoming signal that a child has exited.
@@ -70,14 +70,18 @@ func ReapChildren() {
 			case nil:
 				// Got a child, clean this up and poll again.
 				if pid > 0 {
-					log.Printf("Reaper: Reaped %d\n", pid)
+					if verboseFlag {
+						log.Printf("Reaper: Reaped pid %d\n", pid)
+					}
 					goto POLL
 				}
 				return
 
 			case unix.ECHILD:
 				// No more children, we are done.
-				log.Println("Reaper: No more children")
+				if verboseFlag {
+					log.Println("Reaper: No more children")
+				}
 				return
 
 			case unix.EINTR:
@@ -86,14 +90,18 @@ func ReapChildren() {
 				// non-blocking fashion, but it's good to be
 				// complete and handle this case rather than
 				// fail.
-				log.Println("Reaper: Interrupted")
+				if verboseFlag {
+					log.Println("Reaper: Interrupted")
+				}
 				goto POLL
 
 			default:
 				// We got some other error we didn't expect.
 				// Wait for another SIGCHLD so we don't
 				// potentially spam in here and chew up CPU.
-				log.Println("Unexpected error", err)
+				if verboseFlag {
+					log.Println("Unexpected error", err)
+				}
 				return
 			}
 		}()

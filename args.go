@@ -14,8 +14,6 @@ import (
 func removeCmdFromOsArgs(flag string) []*exec.Cmd {
 
 	var newOsArgs = []string{}
-	var oldOsArgs = os.Args
-	log.Println("oldOsArgs=", oldOsArgs)
 	var cmd *exec.Cmd
 	var cmds = []*exec.Cmd{}
 	_ = "breakpoint"
