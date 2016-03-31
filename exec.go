@@ -14,6 +14,7 @@ import (
 func runCmd(ctx context.Context, cancel context.CancelFunc, cmd string, args ...string) {
 	defer wg.Done()
 
+	_ = "breakpoint"
 	process := exec.Command(cmd, args...)
 	process.Stdin = os.Stdin
 	process.Stdout = os.Stdout
@@ -22,7 +23,7 @@ func runCmd(ctx context.Context, cancel context.CancelFunc, cmd string, args ...
 	// start the process
 	err := process.Start()
 	if err != nil {
-		log.Fatalf("Error starting command: `%s` - %s\n", cmd, err)
+		log.Fatalf("Error starting command: `%s` - %s\n", toString(process), err)
 	}
 
 	// Setup signaling
@@ -47,9 +48,9 @@ func runCmd(ctx context.Context, cancel context.CancelFunc, cmd string, args ...
 	cancel()
 
 	if err == nil {
-		log.Println("Command finished successfully.")
+		log.Println("Command finished successfully: " + toString(process))
 	} else {
-		log.Printf("Command exited with error: %s\n", err)
+		log.Printf("Command `%s` exited with error: %s\n", toString(process), err)
 		// OPTIMIZE: This could be cleaner
 		os.Exit(err.(*exec.ExitError).Sys().(syscall.WaitStatus).ExitStatus())
 	}

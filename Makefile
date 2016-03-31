@@ -1,10 +1,12 @@
-.SILENT :
-.PHONY : dockerize clean fmt
+.PHONY : dockerize dist-clean dist release zombie-maker
 
 TAG:=`git describe --abbrev=0 --tags`
 LDFLAGS:=-X main.buildVersion=$(TAG)
 
-all: dockerize
+all: dockerize zombie-maker
+
+zombie-maker: zombie-maker.c
+	gcc -o zombie-maker zombie-maker.c
 
 dockerize:
 	echo "Building dockerize"

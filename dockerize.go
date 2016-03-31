@@ -4,9 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
-	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"strings"
@@ -30,6 +27,9 @@ var (
 	stderrTailFlag  sliceVar
 	overlaysFlag    sliceVar
 	secretsFlag     sliceVar
+	startsFlag      sliceVar
+	runsFlag        sliceVar
+	reapFlag        bool
 	delimsFlag      string
 	delims          []string
 	waitFlag        hostFlagsVar
@@ -58,63 +58,6 @@ func (s *sliceVar) String() string {
 	return strings.Join(*s, ",")
 }
 
-func waitForDependencies() {
-	dependencyChan := make(chan struct{})
-
-	if waitFlag == nil {
-		return
-	}
-
-	go func() {
-		for _, host := range waitFlag {
-			log.Println("Waiting for host:", host)
-			u, err := url.Parse(host)
-			if err != nil {
-				log.Fatalf("bad hostname provided: %s. %s", host, err.Error())
-			}
-
-			switch u.Scheme {
-			case "tcp", "tcp4", "tcp6":
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					for {
-						conn, _ := net.DialTimeout(u.Scheme, u.Host, waitTimeoutFlag)
-						if conn != nil {
-							log.Println("Connected to", u.String())
-							return
-						}
-					}
-				}()
-			case "http", "https":
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					for {
-						resp, err := http.Get(u.String())
-						if err == nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
-							log.Printf("Received %d from %s\n", resp.StatusCode, u.String())
-							return
-						}
-					}
-				}()
-			default:
-				log.Fatalf("invalid host protocol provided: %s. supported protocols are: tcp, tcp4, tcp6, http and https", u.Scheme)
-			}
-		}
-		wg.Wait()
-		close(dependencyChan)
-	}()
-
-	select {
-	case <-dependencyChan:
-		break
-	case <-time.After(waitTimeoutFlag):
-		log.Fatalf("Timeout after %s waiting on dependencies to become available: %v", waitTimeoutFlag, waitFlag)
-	}
-
-}
-
 func usage() {
 	println(`Usage: dockerize [options] [command]
 
@@ -131,9 +74,9 @@ Arguments:
 	println(`Examples:
 `)
 	println(`   Generate /etc/nginx/nginx.conf using nginx.tmpl as a template, tail /var/log/nginx/access.log
-   and /var/log/nginx/error.log, waiting for a website to become available on port 8000 and start nginx.`)
+   and /var/log/nginx/error.log, waiting for a website to become available on port 8000 and start nginx:`)
 	println(`
-   dockerize -template nginx.tmpl:/etc/nginx/nginx.conf \
+       dockerize -template nginx.tmpl:/etc/nginx/nginx.conf \
    	     -overlay overlays/_common/html:/usr/share/nginx/ \
    	     -overlay overlays/{{ .Env.DEPLOYMENT_ENV }}/html:/usr/share/nginx/ \`)
 	println(`   	     -stdout /var/log/nginx/access.log \
@@ -141,7 +84,19 @@ Arguments:
              -wait tcp://web:8000 nginx \
              -secrets /secrets/secrets.env
 	`)
+	println(`   Run a command and reap any zombie children that the command forgets to reap
 
+       dockerize -reap command 
+	     `)
+	println(`   Run /bin/echo before the main command runs:
+       
+       dockerize -run /bin/echo -e "Starting -- command\n\n" 
+	     `)
+
+	println(`   Start /bin/service before the main command runs and exit if the service fails:
+       
+       dockerize -start /bin/sleep 5 -- /bin/service 
+	     `)
 	println(`For more information, see https://github.com/jwilder/dockerize`)
 }
 
@@ -152,11 +107,17 @@ func main() {
 	flag.Var(&templatesFlag, "template", "Template (/template:/dest). Can be passed multiple times")
 	flag.Var(&overlaysFlag, "overlay", "overlay (/src:/dest). Can be passed multiple times")
 	flag.Var(&secretsFlag, "secrets", "secrets (path to secrets.env file). Can be passed multiple times")
+	flag.Var(&runsFlag, "run", "run (cmd [opts] [args] --) Can be passed multiple times")
+	flag.Var(&startsFlag, "start", "start (cmd [opts] [args] --) Can be passed multiple times")
+	flag.BoolVar(&reapFlag, "reap", false, "reap all child processes")
 	flag.Var(&stdoutTailFlag, "stdout", "Tails a file to stdout. Can be passed multiple times")
 	flag.Var(&stderrTailFlag, "stderr", "Tails a file to stderr. Can be passed multiple times")
 	flag.StringVar(&delimsFlag, "delims", "", `template tag delimiters. default "{{":"}}" `)
 	flag.Var(&waitFlag, "wait", "Host (tcp/tcp4/tcp6/http/https) to wait for before this container starts. Can be passed multiple times. e.g. tcp://db:5432")
 	flag.DurationVar(&waitTimeoutFlag, "timeout", 10*time.Second, "Host wait timeout")
+
+	var startCmds = removeCmdFromOsArgs("start")
+	var runCmds = removeCmdFromOsArgs("run")
 
 	flag.Usage = usage
 	flag.Parse()
@@ -214,11 +175,6 @@ func main() {
 	// Setup context
 	ctx, cancel = context.WithCancel(context.Background())
 
-	if flag.NArg() > 0 {
-		wg.Add(1)
-		go runCmd(ctx, cancel, flag.Arg(0), flag.Args()[1:]...)
-	}
-
 	for _, out := range stdoutTailFlag {
 		wg.Add(1)
 		go tailFile(ctx, out, poll, os.Stdout)
@@ -229,5 +185,28 @@ func main() {
 		go tailFile(ctx, err, poll, os.Stderr)
 	}
 
+	// Process -start and -run flags
+	for _, cmd := range runCmds {
+		log.Printf("Pre-Running: `%s`\n", toString(cmd))
+		runCmd(context.Background(), func() {}, cmd.Path, cmd.Args[1:]...)
+	}
+	for _, cmd := range startCmds {
+		log.Printf("Starting Service: `%s`\n", toString(cmd))
+		wg.Add(1)
+		go runCmd(ctx, func() {
+			log.Fatalf("Service `%s` stopped", toString(cmd))
+		}, cmd.Path, cmd.Args[1:]...)
+	}
+
+	if flag.NArg() > 0 {
+		var cmdString = strings.Join(flag.Args(), " ")
+		log.Printf("Running Primary Command: `%s`\n", cmdString)
+		wg.Add(1)
+		go runCmd(ctx, func() {
+			log.Fatalf("Primary Command `%s` stopped", cmdString)
+		}, flag.Arg(0), flag.Args()[1:]...)
+	}
+
+	go reapChildren(nil)
 	wg.Wait()
 }

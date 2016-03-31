@@ -15,6 +15,7 @@ RUN  cd /usr/local/bin && \
 COPY default.conf.tmpl /etc/nginx/conf.d/default.conf.tmpl
 
 COPY overlays /tmp/overlays
+COPY zombie-maker-debian-binary /usr/local/bin/zombie-maker
  
 EXPOSE 80
 
