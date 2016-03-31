@@ -47,7 +47,7 @@ run-prod-secrets: stop
 	open http://$(shell docker-machine ip $(shell docker-machine active))/secrets.html
 
 run-zombie-test: stop
-	docker run -d --name dockerized-nginx dockerized-nginx -reap -- zombie-maker 10 200 
+	docker run -d --name dockerized-nginx dockerized-nginx -reap -run zombie-maker 10 2 -- sleep 20
 	@echo "Tailing logs -- look for zombies"
 	docker logs -f dockerized-nginx
 

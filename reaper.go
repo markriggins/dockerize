@@ -1,54 +1,101 @@
-package main
+// +build !windows,!solaris
 
-// Adapted from https://github.com/miekg/dinit/sigchld.go which was
-// Adapted from https://github.com/ramr/go-reaper/blob/master/reaper.go
-// No license published there...
+package main
 
 import (
 	"log"
 	"os"
 	"os/signal"
-	"syscall"
-	"time"
+	"sync"
+
+	"golang.org/x/sys/unix"
 )
 
-type OnDeathFunc func(childPid int) error
-
-func catchAllChildSignals() {
-	var sigs = make(chan os.Signal, 3)
-	var sig os.Signal
-	signal.Notify(sigs, syscall.SIGCHLD)
-
-	for {
-		sig = <-sigs
-		log.Printf("received signal %s\n", sig)
-	}
+// IsSupported returns true if child process reaping is supported on this
+// platform.
+func IsSupported() bool {
+	return true
 }
 
-// waiting for dying children cleans up zombies
-// No good parent would want their child to wind up as a zombie -- right?
-func waitForChildrenToDie() {
-	var wstatus syscall.WaitStatus
+// ReapChildren is a long-running routine that blocks waiting for child
+// processes to exit and reaps them, reporting reaped process IDs to the
+// optional pids channel and any errors to the optional errors channel.
+//
+// The optional reapLock will be used to prevent reaping during periods
+// when you know your application is waiting for subprocesses to return.
+// You need to use care in order to prevent the reaper from stealing your
+// return values from uses of packages like Go's exec. We use an RWMutex
+// so that we don't serialize all of the application's execution of sub
+// processes with each other, but we do serialize them with reaping. The
+// application should get a read lock when it wants to do a wait.
+func ReapChildren() {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, unix.SIGCHLD)
+
+	log.Println("Reaper: started")
+
+	done := make(chan struct{}, 1)
+
+	var reapLock = &sync.RWMutex{}
 
 	for {
-		pid, err := syscall.Wait4(-1, &wstatus, 0, nil)
-		if err == syscall.EINTR {
-			log.Printf("wait4 pid %d interrupted: %+v", pid, wstatus)
-		} else if err == syscall.ECHILD {
-			log.Printf("wait4: No more children")
-			time.Sleep(2000)
-		} else {
-			log.Printf("pid %d, finished, wstatus: %+v", pid, wstatus)
+		// Block for an incoming signal that a child has exited.
+		select {
+		case <-c:
+			// Got a child signal, drop out and reap.
+		case <-done:
+			return
 		}
+
+		// Attempt to reap all abandoned child processes after getting
+		// the reap lock, which makes sure the application isn't doing
+		// any waiting of its own. Note that we do the full write lock
+		// here.
+		func() {
+			if reapLock != nil {
+				reapLock.Lock()
+				defer reapLock.Unlock()
+			}
+
+		POLL:
+			// Try to reap children until there aren't any more. We
+			// never block in here so that we are always responsive
+			// to signals, at the expense of possibly leaving a
+			// child behind if we get here too quickly. Any
+			// stragglers should get reaped the next time we see a
+			// signal, so we won't leak in the long run.
+			var status unix.WaitStatus
+			pid, err := unix.Wait4(-1, &status, unix.WNOHANG, nil)
+			switch err {
+			case nil:
+				// Got a child, clean this up and poll again.
+				if pid > 0 {
+					log.Printf("Reaper: Reaped %d\n", pid)
+					goto POLL
+				}
+				return
+
+			case unix.ECHILD:
+				// No more children, we are done.
+				log.Println("Reaper: No more children")
+				return
+
+			case unix.EINTR:
+				// We got interrupted, try again. This likely
+				// can't happen since we are calling Wait4 in a
+				// non-blocking fashion, but it's good to be
+				// complete and handle this case rather than
+				// fail.
+				log.Println("Reaper: Interrupted")
+				goto POLL
+
+			default:
+				// We got some other error we didn't expect.
+				// Wait for another SIGCHLD so we don't
+				// potentially spam in here and chew up CPU.
+				log.Println("Unexpected error", err)
+				return
+			}
+		}()
 	}
-}
-
-func reapChildren(onDeathFunc OnDeathFunc) {
-
-	if onDeathFunc == nil {
-		onDeathFunc = func(childPid int) error { return nil }
-	}
-
-	go catchAllChildSignals()
-	go waitForChildrenToDie()
 }

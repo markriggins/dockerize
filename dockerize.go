@@ -207,6 +207,6 @@ func main() {
 		}, flag.Arg(0), flag.Args()[1:]...)
 	}
 
-	go reapChildren(nil)
+	go ReapChildren()
 	wg.Wait()
 }
