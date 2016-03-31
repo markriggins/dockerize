@@ -15,7 +15,7 @@ zombie-maker: zombie-maker.c
 
 
 stop:
-	docker rm -f dockerized-nginx 2>/dev/null || true
+	@docker rm -f dockerized-nginx 2>/dev/null || true
 
 run-staging: stop
 	docker run -d -p 80:80 -e DEPLOYMENT_ENV=staging --name dockerized-nginx dockerized-nginx \
@@ -46,10 +46,47 @@ run-prod-secrets: stop
 			        -secrets /secrets/secrets.env -- nginx 
 	open http://$(shell docker-machine ip $(shell docker-machine active))/secrets.html
 
-run-zombie-test: stop
-	docker run -d --name dockerized-nginx dockerized-nginx  -verbose -reap \
-		-run zombie-maker 10 2 -- -run sleep 5 -- -run ps -ef -- sleep 200
-	@echo "Tailing logs -- look for zombies"
-	docker logs -f dockerized-nginx
 
+test: start-tests run-zombie-test run-service-stops-too-soon-test run-primary-stops-while-service-is-running-test
+
+start-tests:
+	@echo "\nRunning all tests"
+	@echo "--------------------------------------------------------------------------"
+
+run-zombie-test: 
+	@echo "\nRunning Zombie Test -- expect 10 zombies to get reaped"
+	@echo "--------------------------------------------------------------------------"
+	@docker rm -f dockerized-nginx 2>/dev/null || true
+	docker run -d --name dockerized-nginx dockerized-nginx -verbose -reap \
+		-run zombie-maker 10 2 -- \
+		sleep 20 >/dev/null
+	@sleep 5
+	docker logs dockerized-nginx
+
+
+run-service-stops-too-soon-test: 
+	@echo "\nRunning 'run-service-stops-too-soon-test'"
+	@echo "\tWhen the service exits, the primary command should also stop"
+	@echo "--------------------------------------------------------------------------"
+	@docker rm -f dockerized-nginx 2>/dev/null || true
+	docker run -d -it --name dockerized-nginx dockerized-nginx -verbose \
+		-start bash -c 'sleep 5 && echo "service exiting"' -- \
+		sleep 10 >/dev/null
+	@sleep 7
+	docker logs dockerized-nginx
+
+
+run-primary-stops-while-service-is-running-test: 
+	@echo "\nRunning 'run-primary-stops-while-service-is-running-test'"
+	@echo "\tThis should kill the services before they have a chance to finish"
+	@echo "--------------------------------------------------------------------------"
+	@docker rm -f dockerized-nginx 2>/dev/null || true
+	docker run -d -it --name dockerized-nginx dockerized-nginx -verbose \
+		-start bash -c 'sleep 10 && echo "ERROR: service-1 STILL RUNNING"' -- \
+		-start bash -c 'sleep 10 && echo "ERROR: service-2 STILL RUNNING"' -- \
+		-start bash -c 'sleep 10 && echo "ERROR: service-3 STILL RUNNING"' -- \
+		sleep 5 >/dev/null
+	@sleep 7
+	docker logs dockerized-nginx
+	
 

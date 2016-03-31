@@ -189,7 +189,9 @@ func main() {
 	// Process -start and -run flags
 	for _, cmd := range runCmds {
 		log.Printf("Pre-Running: `%s`\n", toString(cmd))
-		runCmd(context.Background(), func() {}, cmd.Path, cmd.Args[1:]...)
+		wg.Add(1)
+		go runCmd(ctx, cancel, cmd.Path, cmd.Args[1:]...)
+		wg.Wait()
 	}
 	for _, cmd := range startCmds {
 		log.Printf("Starting Service: `%s`\n", toString(cmd))
